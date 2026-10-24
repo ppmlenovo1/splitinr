@@ -1,0 +1,9 @@
+{
+  "name": "splitinr-friends-expense-sharing",
+  "version": "1.1.0",
+  "private": true,
+  "description": "SplitINR — Friends Expense Sharing (INR, paise ledger, UPI settle-up)",
+  "scripts": {
+    "start": "npx serve ."
+  }
+}
