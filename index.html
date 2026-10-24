@@ -89,11 +89,16 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:18px}
   <section id="tab-people" style="display:none">
     <div class="grid">
       <div class="card">
-        <h3>Add friend</h3>
+        <h3 id="fTitle">Add friend</h3>
         <label>Name</label><input id="fName" placeholder="e.g. Priya Sharma">
-        <label>Phone</label><input id="fPhone" placeholder="98XXXXXXXX">
+        <label>Phone (10-digit mobile)</label><input id="fPhone" placeholder="98XXXXXXXX" inputmode="numeric" maxlength="13">
+        <div class="muted small">Indian mobile: 10 digits starting 6–9. +91 / spaces allowed, stored as 10 digits.</div>
         <label>UPI ID (for settle-up)</label><input id="fUpi" placeholder="priya@okhdfc">
-        <div style="margin-top:10px"><button class="primary" onclick="addFriend()">Add friend</button></div>
+        <div id="fErr" class="small" style="display:none;color:#dc2626;margin-top:8px"></div>
+        <div style="margin-top:10px" class="row">
+          <button id="fSaveBtn" class="primary" onclick="saveFriend()">Add friend</button>
+          <button id="fCancelBtn" class="ghost" style="display:none" onclick="cancelEditFriend()">Cancel</button>
+        </div>
         <hr><h3>Friends</h3><div id="friendList"></div>
       </div>
       <div class="card">
@@ -193,6 +198,7 @@ function load(){ try{return JSON.parse(localStorage.getItem(LS));}catch(e){retur
 function save(){ localStorage.setItem(LS, JSON.stringify(S)); }
 function logAct(t){ S.activities.unshift({ts:new Date().toLocaleString('en-IN'), text:t}); }
 let editingId = null; let pendingVals = null; // editing state
+let editingFriendId = null;
 
 // ---------- splits (all in paise) ----------
 function splitEqual(total, ids){
@@ -243,13 +249,68 @@ const fname=id=>(S.friends.find(f=>f.id===id)||{}).name||'—';
 const fupi=id=>(S.friends.find(f=>f.id===id)||{}).upi||'';
 
 // ---------- CRUD ----------
-function addFriend(){
-  const name=$('fName').value.trim(), phone=$('fPhone').value.trim(), upi=$('fUpi').value.trim();
-  if(!name) return alert('Enter friend name');
+function normalizeIndianMobile(raw){
+  let d=String(raw||'').replace(/\D/g,'');
+  if(!d) return '';
+  if(d.length===12 && d.startsWith('91')) d=d.slice(2);
+  if(d.length===11 && d.startsWith('0')) d=d.slice(1);
+  return d;
+}
+function validIndianMobile(raw){
+  const d=normalizeIndianMobile(raw);
+  return /^[6-9]\d{9}$/.test(d) ? d : null;
+}
+function showFriendErr(msg){
+  const el=$('fErr');
+  if(!msg){ el.style.display='none'; el.textContent=''; return; }
+  el.style.display=''; el.textContent=msg;
+}
+function saveFriend(){
+  const name=$('fName').value.trim(), phoneRaw=$('fPhone').value.trim(), upi=$('fUpi').value.trim();
+  if(!name){ showFriendErr('Enter friend name.'); return alert('Enter friend name'); }
+  showFriendErr('');
+  let phone='';
+  if(phoneRaw){
+    const ok=validIndianMobile(phoneRaw);
+    if(!ok){ showFriendErr('Invalid phone: enter 10-digit Indian mobile starting 6–9 (e.g. 9811111111).'); $('fPhone').focus(); return; }
+    phone=ok;
+    // duplicate-phone guard (ignore self when editing)
+    const dup=S.friends.find(x=>x.phone===phone && x.id!==editingFriendId);
+    if(dup){ showFriendErr(`This number is already saved for ${dup.name}.`); return; }
+  }
+  if(editingFriendId){
+    const f=S.friends.find(x=>x.id===editingFriendId);
+    if(!f){ editingFriendId=null; return; }
+    const oldName=f.name, oldUpi=f.upi||'';
+    f.name=name; f.phone=phone; f.upi=upi;
+    logAct(`✏️ Edited friend “${oldName}” → “${name}”${oldUpi!==upi?` (UPI ${oldUpi||'—'} → ${upi||'—'})`:''}`);
+    save(); cancelEditFriend(true); $('fName').value=$('fPhone').value=$('fUpi').value=''; refresh();
+    return;
+  }
   const f={id:uid(),name,phone,upi}; S.friends.push(f);
   if(!S.meId) S.meId=f.id;
   logAct(`👤 Added friend ${name}`); save(); refresh();
   $('fName').value=$('fPhone').value=$('fUpi').value='';
+}
+function addFriend(){ saveFriend(); }
+function startEditFriend(id){
+  const f=S.friends.find(x=>x.id===id); if(!f) return;
+  editingFriendId=id;
+  switchTab('people');
+  $('fName').value=f.name; $('fPhone').value=f.phone||''; $('fUpi').value=f.upi||'';
+  $('fTitle').textContent=`Edit friend — ${f.name}`;
+  $('fSaveBtn').textContent='Update friend';
+  $('fCancelBtn').style.display='';
+  window.scrollTo({top:0,behavior:'smooth'});
+  $('fName').focus();
+}
+function cancelEditFriend(silent){
+  editingFriendId=null;
+  showFriendErr('');
+  if($('fTitle')) $('fTitle').textContent='Add friend';
+  if($('fSaveBtn')) $('fSaveBtn').textContent='Add friend';
+  if($('fCancelBtn')) $('fCancelBtn').style.display='none';
+  if(!silent){ $('fName').value=$('fPhone').value=$('fUpi').value=''; }
 }
 function addGroup(){
   const name=$('gName').value.trim(); if(!name) return alert('Enter group name');
@@ -385,7 +446,7 @@ function buildFormOptions(){
 }
 function refreshKeepForm(){
   $('meSelect').innerHTML=S.friends.map(f=>`<option value="${f.id}" ${f.id===S.meId?'selected':''}>${esc(f.name)}</option>`).join('')||'<option value="">Add a friend first</option>';
-  $('friendList').innerHTML=S.friends.map(f=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0"><span><b>${esc(f.name)}</b> <span class="muted">${esc(f.phone||'')} ${esc(f.upi?'· '+f.upi:'')}</span></span><button class="danger" onclick="delFriend('${f.id}')">Remove</button></div>`).join('')||'<p class="muted">No friends yet.</p>';
+  $('friendList').innerHTML=S.friends.map(f=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0"><span><b>${esc(f.name)}</b> <span class="muted">${esc(f.phone||'')} ${esc(f.upi?'· '+f.upi:'')}</span></span><span class="row"><button class="ghost" onclick="startEditFriend('${f.id}')">Edit</button><button class="danger" onclick="delFriend('${f.id}')">Remove</button></span></div>`).join('')||'<p class="muted">No friends yet.</p>';
   $('gMembers').innerHTML=S.friends.map(f=>`<label><input type="checkbox" value="${f.id}" checked style="width:auto"> ${esc(f.name)}</label>`).join('');
   $('groupList').innerHTML=S.groups.map(g=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0"><span><b>${esc(g.name)}</b> <span class="muted">${g.type} · ${g.memberIds.map(fname).join(', ')}</span></span><button class="danger" onclick="delGroup('${g.id}')">Delete</button></div>`).join('')||'<p class="muted">No groups yet.</p>';
   // rebuild expense options WITHOUT wiping current form values
@@ -402,7 +463,7 @@ function refresh(){
   $('meSelect').innerHTML=S.friends.map(f=>`<option value="${f.id}" ${f.id===S.meId?'selected':''}>${esc(f.name)}</option>`).join('')||'<option value="">Add a friend first</option>';
   $('meSelect').onchange=e=>{S.meId=e.target.value;save();refresh();};
   // friends & groups
-  $('friendList').innerHTML=S.friends.map(f=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0"><span><b>${esc(f.name)}</b> <span class="muted">${esc(f.phone||'')} ${esc(f.upi?'· '+f.upi:'')}</span></span><button class="danger" onclick="delFriend('${f.id}')">Remove</button></div>`).join('')||'<p class="muted">No friends yet.</p>';
+  $('friendList').innerHTML=S.friends.map(f=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0"><span><b>${esc(f.name)}</b> <span class="muted">${esc(f.phone||'')} ${esc(f.upi?'· '+f.upi:'')}</span></span><span class="row"><button class="ghost" onclick="startEditFriend('${f.id}')">Edit</button><button class="danger" onclick="delFriend('${f.id}')">Remove</button></span></div>`).join('')||'<p class="muted">No friends yet.</p>';
   $('gMembers').innerHTML=S.friends.map(f=>`<label><input type="checkbox" value="${f.id}" checked style="width:auto"> ${esc(f.name)}</label>`).join('');
   $('groupList').innerHTML=S.groups.map(g=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 0"><span><b>${esc(g.name)}</b> <span class="muted">${g.type} · ${g.memberIds.map(fname).join(', ')}</span></span><button class="danger" onclick="delGroup('${g.id}')">Delete</button></div>`).join('')||'<p class="muted">No groups yet.</p>';
   // selects
@@ -466,12 +527,44 @@ function switchTab(name){
   ['dash','people','add','settle','activity'].forEach(t=>$('tab-'+t).style.display=t===name?'block':'none');
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+function friendDues(id){
+  const {net,out}=suggestSettlements(null);
+  const myNet=net[id]||0;
+  const pays=out.filter(o=>o.from===id);   // this friend owes these
+  const gets=out.filter(o=>o.to===id);     // these owe this friend
+  const involved=S.expenses.filter(e=>!e.isDeleted && (e.paidBy===id || e.splits.some(s=>s.userId===id))).slice(0,5);
+  return {myNet,pays,gets,involved};
+}
 function delFriend(id){
-  const net=computeNets(null);
-  if(Math.abs(net[id]||0)>0.5) return alert('Settle balance to ₹0 before removing.');
-  S.friends=S.friends.filter(f=>f.id!==id);
+  const f=S.friends.find(x=>x.id===id); if(!f) return;
+  const {myNet,pays,gets,involved}=friendDues(id);
+  const lines=[`Remove ${f.name}?`,''];
+  if(Math.abs(myNet)<0.5){
+    lines.push('✅ No pending dues — net is ₹0.');
+  } else if(myNet<0){
+    lines.push(`⚠️ ${f.name} OWES ${formatINR(-myNet)} overall.`);
+  } else {
+    lines.push(`⚠️ ${f.name} IS OWED ${formatINR(myNet)} overall.`);
+  }
+  pays.forEach(o=>lines.push(`  • owes ${fname(o.to)} ${formatINR(o.amountPaise)}`));
+  gets.forEach(o=>lines.push(`  • ${fname(o.from)} owes ${f.name} ${formatINR(o.amountPaise)}`));
+  if(involved.length){
+    lines.push('', `Recent shared expenses (${involved.length} shown):`);
+    involved.forEach(e=>lines.push(`  • ${e.date} “${e.desc}” ${formatINR(e.amountPaise)} (paid by ${fname(e.paidBy)})`));
+  }
+  lines.push('', 'Removing keeps past expenses (names show as —). Group memberships are removed.');
+  if(Math.abs(myNet)>0.5){
+    lines.push('❌ BLOCKED: settle to ₹0 first (record a payment in Settle Up), then remove.');
+    alert(lines.join('\n'));
+    switchTab('settle');
+    return;
+  }
+  if(!confirm(lines.join('\n')+'\n\nConfirm remove?')) return;
+  S.friends=S.friends.filter(x=>x.id!==id);
   S.groups.forEach(g=>g.memberIds=g.memberIds.filter(m=>m!==id));
+  if(editingFriendId===id){ editingFriendId=null; $('fName').value=$('fPhone').value=$('fUpi').value=''; }
   if(S.meId===id) S.meId=S.friends[0]?.id||null;
+  logAct(`🗑 Removed friend ${f.name} (no dues)`);
   save();refresh();
 }
 function delGroup(id){ if(!confirm('Delete group? Expenses are kept globally.'))return; S.groups=S.groups.filter(g=>g.id!==id); save();refresh(); }
@@ -495,5 +588,5 @@ function seedDemo(){
 }
 if(!S.friends.length) seedDemo(); else refresh();
 </script>
-</body>
+<script>window.__CF$cv$params={r:'a4fad58dc9e454a9',t:'MTc5Mjg2NDMzNQ==',u:'01a16f0ab751741d88a9eaa5678ba8d7',ut:'TWxJEZv0jv5Yorqm7z98hiPWHN7W3LnGgGULWVZoYbc-1792864335-1.2.1.1-0zmQq86RxOWh_43eeHv_5vQZGsgNl7yunuB9L1KjX_3m_ZIuKQR3qct9rtB_vho_pIVXIyp7ikV6QMl9kskHEWUFSLgZ9pHTw1ULWKKR.A0',i:60};(function(){if(!document.body)return;var s=document.createElement('script');s.src='/cdn-cgi/challenge-platform/scripts/precursor/main.js';document.head.appendChild(s);})();</script></body>
 </html>
